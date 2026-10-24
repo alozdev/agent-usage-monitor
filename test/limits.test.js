@@ -8,6 +8,7 @@ import {
   normalizeCodexUsage,
   preferClaude,
   projectClaude,
+  projectCodex,
 } from '../src/core/limits.js';
 
 test('normalizeClaudeUsage maps the statusLine rate limits', () => {
@@ -83,6 +84,14 @@ test('projectClaude dims old data and hides an expired window without inventing 
   assert.deepEqual([reset.value, reset.aged, reset.stale], [null, false, true]);
   assert.equal(projectClaude({ value, fetchedAt: now, error: 'x' }, now).stale, true);
   assert.equal(projectClaude({ value: null }, now).stale, false);
+});
+
+test('projectCodex oculta una ventana vencida hasta recibir otra lectura', () => {
+  const now = 1800000000000;
+  const active = { value: { usedPercent: 12, resetsAt: now + 60000 }, fetchedAt: now };
+  assert.deepEqual([projectCodex(active, now).value.usedPercent, projectCodex(active, now).stale], [12, false]);
+  const expired = projectCodex({ ...active, value: { ...active.value, resetsAt: now } }, now);
+  assert.deepEqual([expired.value, expired.stale], [null, true]);
 });
 
 test('explicit null, blank and boolean percentages are not zero', () => {

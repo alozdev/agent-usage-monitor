@@ -55,6 +55,12 @@ export function projectClaude(entry, now = Date.now()) {
   return { ...entry, fetchedAt: entry.fetchedAt || null, stale: Boolean(value && entry.error), aged: Boolean(value) && isStale(entry.fetchedAt, CLAUDE_STALE_MS, now) };
 }
 
+export function projectCodex(entry, now = Date.now()) {
+  const value = entry.value;
+  if (value?.resetsAt && value.resetsAt <= now) return { ...entry, value: null, stale: true };
+  return { ...entry, fetchedAt: entry.fetchedAt || null, stale: Boolean(value) && (Boolean(entry.error) || isStale(entry.fetchedAt, CODEX_STALE_MS, now)) };
+}
+
 export function formatReset(resetAt) {
   const stamp = Number(resetAt);
   if (!Number.isFinite(stamp) || stamp <= 0) return '—';

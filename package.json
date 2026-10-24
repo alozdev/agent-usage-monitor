@@ -22,7 +22,7 @@
     "productName": "Agent Usage Monitor",
     "asar": true,
     "asarUnpack": ["node_modules/@hicccc77/electron-liquid-glass/**/*"],
-    "files": ["src/**/*", "package.json", "README.md", "LICENSE"],
+    "files": ["src/**/*", "assets/icon.ico", "package.json", "README.md", "LICENSE"],
     "directories": { "output": "dist" },
     "win": {
       "icon": "assets/icon.ico",
@@ -40,6 +40,7 @@
     }
   },
   "dependencies": {
-    "@hicccc77/electron-liquid-glass": "0.4.0"
+    "@hicccc77/electron-liquid-glass": "0.4.0",
+    "lucide": "^1.61.0"
   }
 }
