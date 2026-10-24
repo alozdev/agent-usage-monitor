@@ -74,9 +74,13 @@ button { -webkit-app-region: no-drag; font: inherit; cursor: pointer; }
 .expanded .footer { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 7px; border-top: 1px solid #ddd; font-size: 11px; line-height: 20px; white-space: nowrap; }
 .expanded #footer-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .expanded #footer-status { display: flex; align-items: center; gap: 5px; }
-.expanded #footer-status .lucide-icon { flex: 0 0 12px; width: 12px; height: 12px; }
+.expanded #footer-status .ui-icon { flex: 0 0 12px; width: 12px; height: 12px; }
 .expanded .settings { display: grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; border: 0; padding: 2px; background: transparent; color: inherit; }
-.lucide-icon { width: 16px; height: 16px; }
+.ui-icon { display: inline-block; width: 16px; height: 16px; background-color: currentColor; mask: center / contain no-repeat; }
+.icon-eye { mask-image: url('icons/eye.svg'); }
+.icon-eye-off { mask-image: url('icons/eye-off.svg'); }
+.icon-settings { mask-image: url('icons/settings.svg'); }
+.icon-refresh-cw { mask-image: url('icons/refresh-cw.svg'); }
 .settings:focus-visible, .visibility:focus-visible, .install:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .footer .outdated { color: #777; font-weight: 700; }
 .settings-menu[hidden] { display: none; }

@@ -6,12 +6,11 @@ import {
   isStale,
   normalizeClaudeUsage,
   normalizeCodexUsage,
-  preferClaude,
   projectClaude,
   projectCodex,
 } from '../src/core/limits.js';
 
-test('normalizeClaudeUsage maps the statusLine rate limits', () => {
+test('normalizeClaudeUsage maps the account rate limits', () => {
   const actual = normalizeClaudeUsage({
     five_hour: { utilization: 27, resets_at: '2026-09-05T20:30:00Z' },
     seven_day: { utilization: 18, resets_at: '2026-09-11T00:00:00Z' },
@@ -47,7 +46,7 @@ test('normalizeCodexUsage returns null instead of inventing 0%', () => {
   assert.equal(normalizeCodexUsage({ rateLimits: {} }), null);
 });
 
-test('isStale marks missing and expired snapshots', () => {
+test('isStale marks missing and expired readings', () => {
   const now = Date.now();
   assert.equal(isStale(0, CLAUDE_STALE_MS, now), true);
   assert.equal(isStale(now - CLAUDE_STALE_MS - 1, CLAUDE_STALE_MS, now), true);
@@ -59,19 +58,6 @@ test('formatReset returns the exact local reset time in 12-hour format', () => {
   assert.equal(formatReset(new Date(2026, 8, 5, 0, 5).getTime()), '12:05am');
   assert.equal(formatReset(new Date(2026, 8, 5, 12, 0).getTime()), '12:00pm');
   assert.equal(formatReset(null), '—');
-});
-
-test('preferClaude ignores an idle session repeating an older, lower percentage', () => {
-  const active = { usedPercent: 66, resetsAt: 5000, fetchedAt: 100 };
-  const idle = { usedPercent: 60, resetsAt: 5000, fetchedAt: 200 };
-  assert.equal(preferClaude(active, idle), active);
-  assert.equal(preferClaude(idle, active), active);
-  const confirmed = { ...active, fetchedAt: 300 };
-  assert.equal(preferClaude(active, confirmed), confirmed);
-  const nextWindow = { usedPercent: 1, resetsAt: 9000, fetchedAt: 50 };
-  assert.equal(preferClaude(active, nextWindow), nextWindow);
-  assert.equal(preferClaude(nextWindow, active), nextWindow);
-  assert.equal(preferClaude(null, idle), idle);
 });
 
 test('projectClaude dims old data and hides an expired window without inventing 0%', () => {

@@ -42,7 +42,8 @@ export function spawnCli(name, args, options = {}) {
     const quote = value => {
       const text = String(value);
       if (/[\r\n\0]/.test(text)) throw new Error('Argumento inválido para el wrapper de Windows');
-      return `"${text.replaceAll('%', '%%').replaceAll('"', '""')}"`;
+      if (text.includes('%')) throw new Error('El carácter % no está soportado en rutas o argumentos del wrapper de Windows');
+      return `"${text.replaceAll('"', '""')}"`;
     };
     // cmd.exe exige comillas exteriores adicionales cuando el ejecutable entre comillas sigue a /c.
     const command = `"${[file, ...args].map(quote).join(' ')}"`;

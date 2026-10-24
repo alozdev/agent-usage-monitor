@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { chmodSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveExecutable, spawnCli } from '../src/main/process.js';
@@ -37,4 +37,15 @@ test('spawnCli ejecuta un wrapper cmd aunque su ruta tenga espacios', { skip: pr
 
   assert.equal(code, 0, stderr);
   assert.equal(stdout.trim(), 'hola mundo');
+});
+
+test('spawnCli rechaza con claridad porcentajes en rutas cmd sin ejecutarlos', { skip: process.platform !== 'win32' }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'usage-monitor-100%-'));
+  const file = path.join(dir, 'herramienta.cmd');
+  try {
+    await writeFile(file, '@echo off\r\necho inesperado\r\n');
+    assert.throws(() => spawnCli('herramienta', [], {
+      env: { ...process.env, PATH: dir, PATHEXT: '.CMD' },
+    }), /%.*wrapper de Windows/);
+  } finally { await unlink(file); await rmdir(dir); }
 });

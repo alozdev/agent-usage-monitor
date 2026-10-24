@@ -3,11 +3,105 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
+import { createClock } from './helpers/clock.js';
+
+async function layoutHarness(bounds, clock = createClock()) {
+  const source = (await readFile(new URL('../src/main/index.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '').replaceAll('import.meta.url', '"file:///widget"');
+  const handlers = {};
+  const contents = {};
+  let saved;
+  const widget = {
+    webContents: contents, isDestroyed: () => false, getBounds: () => ({ ...bounds }),
+    setBounds: value => { bounds = value; },
+    setPosition: (x, y) => { bounds = { ...bounds, x, y }; },
+  };
+  const context = vm.createContext({
+    path: { dirname: () => '', join: (...parts) => parts.join('/') }, fileURLToPath: () => '',
+    createClaudeClient: () => ({}), createCodexClient: () => ({}),
+    app: { requestSingleInstanceLock: () => false, quit() {}, getPath: () => '' },
+    process: { pid: 1 }, mkdir: async () => {}, rename: async () => {}, writeFile: async (_target, data) => { saved = JSON.parse(data); },
+    ipcMain: { handle: (channel, fn) => { handlers[channel] = fn; } },
+    screen: { getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }) },
+    ...clock, widget,
+  });
+  vm.runInContext(source, context);
+  vm.runInContext('mainWindow = widget', context);
+  const event = { sender: contents, senderFrame: { url: 'file:///widget' } };
+  return { context, widget, handlers, event, saved: () => saved,
+    layout: (expanded, extra = {}) => handlers['monitor:layout'](event, { expanded, selectorOpen: false, reduceMotion: true, providers: ['claude', 'codex'], ...extra }),
+  };
+}
+
+for (const [x, y] of [[900, 80], [100, 240], [100, 590]]) {
+  test(`abrir y cerrar conserva la cápsula y su posición guardada en (${x}, ${y})`, async () => {
+    const h = await layoutHarness({ x, y, width: 98, height: 194 });
+    await h.layout(true);
+    await vm.runInContext('writePosition()', h.context);
+    assert.deepEqual(h.saved(), { x, y });
+    await h.layout(false);
+    assert.deepEqual(h.widget.getBounds(), { x, y, width: 98, height: 194 });
+    assert.deepEqual(h.saved(), { x: h.widget.getBounds().x, y: h.widget.getBounds().y });
+  });
+}
+
+test('la animación usa tiempo transcurrido cuando los temporizadores resuelven cada 16 ms', async () => {
+  const clock = createClock(16);
+  const h = await layoutHarness({ x: 100, y: 80, width: 98, height: 194 }, clock);
+  const motion = await h.layout(true, { reduceMotion: false });
+  await clock.advance(128);
+  assert.ok(h.widget.getBounds().width > 110, 'el avance debe seguir el reloj, no el número de callbacks');
+  await clock.advance(motion.duration + motion.delay + 16 - 128);
+  assert.deepEqual(h.widget.getBounds(), { x: 100, y: 80, width: 384, height: 256 });
+});
+
+test('el IPC de movimiento espera a que la ventana termine, incluso tras una pausa larga', async () => {
+  const clock = createClock(320);
+  const h = await layoutHarness({ x: 100, y: 80, width: 98, height: 194 }, clock);
+  const motion = await h.layout(true, { reduceMotion: false });
+  assert.equal(typeof h.handlers['monitor:motion'], 'function');
+  let finished = false;
+  const done = h.handlers['monitor:motion'](h.event).then(() => { finished = true; });
+  await clock.advance(motion.duration + motion.delay + 32);
+  assert.equal(finished, false, 'el plazo estimado no acredita que la ventana haya terminado');
+  await clock.advance(1000);
+  await done;
+  assert.equal(finished, true);
+  assert.equal(h.widget.getBounds().width, 384);
+});
+
+test('esperar el movimiento también espera una transición que reemplaza a la anterior', async () => {
+  const clock = createClock(16);
+  const h = await layoutHarness({ x: 100, y: 80, width: 98, height: 194 }, clock);
+  await h.layout(true, { reduceMotion: false });
+  let finished = false;
+  const done = h.handlers['monitor:motion'](h.event).then(() => { finished = true; });
+  await clock.advance(64);
+  await h.layout(true, { reduceMotion: false, providers: ['claude'] });
+  await clock.advance(16);
+  assert.equal(finished, false, 'cancelar la animación anterior no termina la nueva');
+  await clock.advance(200);
+  await done;
+  assert.equal(finished, true);
+  assert.equal(h.widget.getBounds().width, 230);
+});
+
+test('invertir una apertura en curso conserva la cápsula y guarda su destino final', async () => {
+  const clock = createClock(16);
+  const h = await layoutHarness({ x: 1750, y: 840, width: 98, height: 194 }, clock);
+  await h.layout(true, { reduceMotion: false });
+  await clock.advance(64);
+  await vm.runInContext('writePosition()', h.context);
+  assert.deepEqual(h.saved(), { x: 1750, y: 840 });
+  await h.layout(false, { reduceMotion: false });
+  await clock.advance(300);
+  assert.deepEqual(h.widget.getBounds(), { x: 1750, y: 840, width: 98, height: 194 });
+});
 
 test('widget IPC expands inside the display, collapses and rejects invalid movement', async () => {
   const source = (await readFile(new URL('../src/main/index.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '');
   const handlers = {};
   const boundFrames = [];
+  let now = 0;
   let saved;
   const contents = {};
   let bounds = { x: 1750, y: 840, width: 98, height: 194 };
@@ -23,7 +117,8 @@ test('widget IPC expands inside the display, collapses and rejects invalid movem
     process: { pid: 1 }, mkdir: async () => {}, rename: async () => {}, writeFile: async (_target, data) => { saved = JSON.parse(data); },
     ipcMain: { handle: (channel, fn) => { handlers[channel] = fn; } }, contents,
     screen: { getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }) },
-    setTimeout: fn => { fn(); return 1; },
+    performance: { now: () => now },
+    setTimeout: (fn, ms) => { now += ms; fn(); return 1; },
     widget,
   });
   vm.runInContext(source.replaceAll('import.meta.url', '"file:///widget"'), context);
@@ -171,7 +266,7 @@ test('detecta proveedores, abre solo sus instrucciones y no expone cierre por IP
   const context = vm.createContext({
     path: { dirname: () => '', join: (...parts) => parts.join('/') }, fileURLToPath: () => '',
     createClaudeClient: () => ({}), createCodexClient: () => ({}),
-    projectClaude: value => value, projectCodex: value => value, statusLineStatus: async () => ({ installed: true }),
+    projectClaude: value => value, projectCodex: value => value,
     resolveExecutable: name => name === 'claude' ? 'C:/bin/claude.exe' : null,
     shell: { openExternal: async url => { opened.push(url); } },
     app: { requestSingleInstanceLock: () => false, quit() {}, getPath: () => '' },
@@ -183,6 +278,7 @@ test('detecta proveedores, abre solo sus instrucciones y no expone cierre por IP
   const event = { sender: contents, senderFrame: { url: 'file:///widget' } };
 
   const dashboard = await handlers['monitor:read'](event, false);
+  assert.deepEqual(Object.keys(dashboard).sort(), ['limits', 'providers']);
   assert.deepEqual(JSON.parse(JSON.stringify(dashboard.providers)), [
     { key: 'claude', name: 'Claude', installed: true },
     { key: 'codex', name: 'Codex', installed: false },

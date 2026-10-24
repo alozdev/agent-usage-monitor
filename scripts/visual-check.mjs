@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, session } from 'electron';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 const root = path.resolve(import.meta.dirname, '..');
 app.setPath('userData', path.join(root, 'dist', 'qa-profile'));
 app.on('window-all-closed', () => {});
@@ -64,10 +65,62 @@ async function waitForPanel(win, expanded) {
   }
   throw new Error(`La transición del panel no terminó: expanded=${expanded}`);
 }
+
+async function checkWindowTiming() {
+  const source = (await readFile(path.join(root, 'src/main/index.js'), 'utf8')).replace(/^import .*;$/gm, '').replaceAll('import.meta.url', '"file:///widget"');
+  const win = new BrowserWindow({ x: 100, y: 80, width: 98, height: 194, frame: false, transparent: true, resizable: false, show: false });
+  try {
+    const context = vm.createContext({ path, fileURLToPath: () => root, performance, setTimeout,
+      createClaudeClient: () => ({}), createCodexClient: () => ({}),
+      app: { requestSingleInstanceLock: () => false, quit() {} }, ipcMain: { handle() {} }, win,
+      screen: { getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }) },
+    });
+    vm.runInContext(source, context);
+    vm.runInContext('mainWindow = win', context);
+    for (const expanded of [true, false]) {
+      const startedAt = performance.now();
+      const motion = vm.runInContext(`applyLayout({ expanded: ${expanded}, selectorOpen: false, reduceMotion: false, providers: ['claude', 'codex'] })`, context);
+      await vm.runInContext('boundsMotion', context);
+      const elapsed = performance.now() - startedAt;
+      assert.ok(elapsed >= motion.duration + motion.delay, 'la ventana debe completar toda la duración declarada');
+      assert.ok(elapsed < motion.duration + motion.delay + 64, `la animación se alargó: ${elapsed} ms`);
+      assert.ok(Math.abs(win.getBounds().width - (expanded ? 384 : 98)) <= 1, JSON.stringify(win.getBounds()));
+      console.log(`ventana ${expanded ? 'abrir' : 'cerrar'}: ${Math.round(elapsed)} ms (declarados ${motion.duration + motion.delay} ms)`);
+    }
+  } finally { win.destroy(); }
+}
+
+async function checkIcons(win) {
+  const result = await win.webContents.executeJavaScript(`(async () => {
+    const widget = document.querySelector('.widget');
+    const footer = document.querySelector('#footer');
+    const menu = document.querySelector('#settings-menu');
+    widget.classList.add('glass');
+    const colors = [];
+    for (const light of [false, true]) {
+      footer.classList.toggle('light-text', light);
+      menu.classList.toggle('light-text', light);
+      for (const icon of document.querySelectorAll('.ui-icon')) {
+        const style = getComputedStyle(icon);
+        const image = new Image();
+        image.src = style.maskImage.slice(5, -2);
+        await image.decode();
+        if (style.backgroundColor !== style.color) throw new Error('El icono perdió currentColor');
+      }
+      colors.push(getComputedStyle(document.querySelector('#settings .ui-icon')).backgroundColor);
+    }
+    widget.classList.remove('glass');
+    footer.classList.remove('light-text');
+    menu.classList.remove('light-text');
+    return colors;
+  })()`);
+  assert.deepEqual(result, ['rgb(41, 41, 46)', 'rgb(255, 255, 255)']);
+}
 app.whenReady().then(async () => {
   let win;
   try {
     nativeTheme.themeSource = 'light';
+    await checkWindowTiming();
     await session.defaultSession.clearStorageData({ storages: ['localstorage'] });
     const entry = usedPercent => ({ value: { usedPercent, resetsAt: Date.now() + 600000 }, fetchedAt: Date.now() });
     const cases = [
@@ -130,6 +183,14 @@ app.whenReady().then(async () => {
         const settings = await win.webContents.executeJavaScript(inspect);
         assert.equal(settings.settingsOpen, true);
         assert.deepEqual(settings.settingsRows, ['ClaudeInstalada', 'CodexInstalada']);
+        await checkIcons(win);
+        win.webContents.debugger.attach('1.3');
+        const { nodes } = await win.webContents.debugger.sendCommand('Accessibility.getFullAXTree');
+        const controls = nodes.filter(node => !node.ignored && node.role?.value === 'checkbox');
+        assert.deepEqual(controls.map(node => node.name.value), ['Ocultar Claude', 'Ocultar Codex']);
+        assert.ok(controls.every(node => node.properties.some(property => property.name === 'checked' && property.value.value === 'true')));
+        assert.ok(!nodes.some(node => !node.ignored && ['listbox', 'option'].includes(node.role?.value)));
+        win.webContents.debugger.detach();
         assert.ok(settings.footer.bottom < settings.widget.bottom, 'los ajustes no deben expulsar el pie del panel');
         await writeFile(path.join(root, 'artifacts/wireframe/normal-ajustes.png'), (await capture(win)).toPNG());
         await win.webContents.executeJavaScript("document.querySelector('[data-action=\"toggle-provider\"][data-provider=\"codex\"]').click()");

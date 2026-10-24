@@ -1,10 +1,5 @@
 import { formatReset } from '../core/limits.js';
 import { activeResetAt, formatAge, formatCountdown, meterTone, providerState } from '../core/presentation.js';
-import createIcon from '../../node_modules/lucide/dist/esm/createElement.mjs';
-import Eye from '../../node_modules/lucide/dist/esm/icons/eye.mjs';
-import EyeOff from '../../node_modules/lucide/dist/esm/icons/eye-off.mjs';
-import Settings from '../../node_modules/lucide/dist/esm/icons/settings.mjs';
-import RefreshCw from '../../node_modules/lucide/dist/esm/icons/refresh-cw.mjs';
 
 const providers = document.querySelector('#providers');
 const widget = document.querySelector('.widget');
@@ -24,6 +19,7 @@ let visibility;
 try { visibility = JSON.parse(localStorage.getItem(visibilityKey)) || {}; } catch { visibility = {}; }
 let expanded = false;
 let settingsOpen = false;
+let settingsTransition = 0;
 let pointer = null;
 let dragged = false;
 let glassContrast = null;
@@ -66,7 +62,7 @@ function cell(name, key, entry) {
   </article>`;
 }
 
-function iconMarkup(icon) { return createIcon(icon, { class: 'lucide-icon', 'aria-hidden': 'true' }).outerHTML; }
+function iconMarkup(name) { return `<span class="ui-icon icon-${name}" aria-hidden="true"></span>`; }
 
 function providerInfo() { return latest.providers?.length ? latest.providers : knownProviders; }
 function providerVisible(provider) { return provider.installed !== false && visibility[provider.key] !== false; }
@@ -84,16 +80,12 @@ function syncLayout() {
     return result;
   });
 }
-function waitForMotion(result) {
-  const duration = Number(result?.duration) || 0;
-  const delay = Number(result?.delay) || 0;
-  return duration || delay ? new Promise(resolve => setTimeout(resolve, duration + delay + 32)) : Promise.resolve();
-}
+function waitForMotion() { return window.usageMonitor.waitForMotion(); }
 function renderSettings() {
   providerSettings.innerHTML = providerInfo().map(provider => {
-    if (provider.installed === false) return `<div class="provider-setting"><span><strong>${provider.name}</strong><small>No instalada</small></span><button class="install" data-action="install" data-provider="${provider.key}">Instalar</button></div>`;
+    if (provider.installed === false) return `<div class="provider-setting" role="group" aria-label="${provider.name}"><span><strong>${provider.name}</strong><small>No instalada</small></span><button class="install" aria-label="Instalar ${provider.name}" data-action="install" data-provider="${provider.key}">Instalar</button></div>`;
     const visible = providerVisible(provider);
-    return `<div class="provider-setting" role="option" aria-selected="${visible}"><span><strong>${provider.name}</strong><small>${provider.installed === null ? 'Detectando…' : 'Instalada'}</small></span><button class="visibility" role="checkbox" aria-checked="${visible}" aria-label="${visible ? 'Ocultar' : 'Mostrar'} ${provider.name}" data-action="toggle-provider" data-provider="${provider.key}">${iconMarkup(visible ? Eye : EyeOff)}</button></div>`;
+    return `<div class="provider-setting" role="group" aria-label="${provider.name}"><span><strong>${provider.name}</strong><small>${provider.installed === null ? 'Detectando…' : 'Instalada'}</small></span><button class="visibility" role="checkbox" aria-checked="${visible}" aria-label="${visible ? 'Ocultar' : 'Mostrar'} ${provider.name}" data-action="toggle-provider" data-provider="${provider.key}">${iconMarkup(visible ? 'eye' : 'eye-off')}</button></div>`;
   }).join('');
 }
 
@@ -114,59 +106,65 @@ function render() {
   const old = entries.find(entry => ['aged', 'stale'].includes(providerState(entry).key));
   const stamps = entries.map(entry => entry?.fetchedAt).filter(Number.isFinite);
   const oldProvider = old && activeProviders[entries.indexOf(old)];
-  footerStatus.classList?.toggle?.('outdated', Boolean(old));
-  footerStatus.innerHTML = old ? `⚠ ${oldProvider.name} · ${Number.isFinite(old.fetchedAt) ? formatAge(old.fetchedAt) : 'Sin lectura reciente'}` : stamps.length ? `${iconMarkup(RefreshCw)}<span>${formatReset(Math.min(...stamps))}</span>` : 'Esperando lectura';
-  footerStatus.setAttribute?.('aria-label', stamps.length && !old ? `Actualizado ${formatReset(Math.min(...stamps))}` : footerStatus.textContent || 'Estado de actualización');
+  footerStatus.classList.toggle('outdated', Boolean(old));
+  footerStatus.innerHTML = old ? `⚠ ${oldProvider.name} · ${Number.isFinite(old.fetchedAt) ? formatAge(old.fetchedAt) : 'Sin lectura reciente'}` : stamps.length ? `${iconMarkup('refresh-cw')}<span>${formatReset(Math.min(...stamps))}</span>` : 'Esperando lectura';
+  footerStatus.setAttribute('aria-label', stamps.length && !old ? `Actualizado ${formatReset(Math.min(...stamps))}` : footerStatus.textContent || 'Estado de actualización');
   footer.classList.toggle('light-text', glassContrast?.footer === true);
-  settingsMenu.classList?.toggle?.('light-text', glassContrast?.footer === true);
+  settingsMenu.classList.toggle('light-text', glassContrast?.footer === true);
   renderSettings();
   void syncLayout();
 }
 
 async function openSettings() {
   if (!expanded || settingsOpen) return;
+  const current = ++settingsTransition;
   settingsOpen = true;
   widget.classList.add('selector-open');
   settingsButton.setAttribute('aria-expanded', 'true');
   renderSettings();
-  await waitForMotion(await syncLayout());
+  await syncLayout();
+  await waitForMotion();
+  if (current !== settingsTransition || !settingsOpen || !expanded) return;
   settingsMenu.hidden = false;
-  requestAnimationFrame(() => settingsMenu.classList.add('open'));
+  requestAnimationFrame(() => { if (current === settingsTransition && settingsOpen && expanded) settingsMenu.classList.add('open'); });
 }
 
 async function closeSettings(resize = true) {
   if (!settingsOpen) return;
+  const current = ++settingsTransition;
+  settingsOpen = false;
+  settingsButton.setAttribute('aria-expanded', 'false');
   settingsMenu.classList.remove('open');
   await new Promise(resolve => setTimeout(resolve, reduceMotion ? 1 : 140));
+  if (current !== settingsTransition) return;
   settingsMenu.hidden = true;
-  settingsOpen = false;
   widget.classList.remove('selector-open');
-  settingsButton.setAttribute('aria-expanded', 'false');
-  if (resize) await waitForMotion(await syncLayout());
+  if (resize) { await syncLayout(); await waitForMotion(); }
 }
 
 async function setExpanded(value) {
   const current = ++transition;
+  if (!value) expanded = false;
   if (!value && settingsOpen) await closeSettings(false);
+  if (current !== transition) return;
   toggle.setAttribute('aria-expanded', String(value));
   toggle.setAttribute('aria-label', value ? 'Ocultar detalle de uso' : 'Mostrar detalle de uso');
   if (value) {
     expanded = true;
-    const motion = await syncLayout();
+    await syncLayout();
     if (current !== transition) return;
     widget.classList.remove('closing');
     widget.classList.add('expanded');
     widget.classList.add('opening');
-    await waitForMotion(motion);
+    await waitForMotion();
     if (current !== transition) return;
     widget.classList.remove('opening');
     return;
   }
   widget.classList.remove('opening');
   widget.classList.add('closing');
-  expanded = false;
-  const motion = await syncLayout();
-  await waitForMotion(motion);
+  await syncLayout();
+  await waitForMotion();
   if (current !== transition) return;
   widget.classList.remove('expanded');
   widget.classList.remove('closing');
@@ -212,8 +210,8 @@ async function refresh(force = false) {
   render();
 }
 
-settingsButton.innerHTML = iconMarkup(Settings);
-emptyIcon.innerHTML = iconMarkup(EyeOff);
+settingsButton.innerHTML = iconMarkup('settings');
+emptyIcon.innerHTML = iconMarkup('eye-off');
 settingsButton.addEventListener('click', event => { event.stopPropagation(); settingsOpen ? void closeSettings() : void openSettings(); });
 document.addEventListener('pointerdown', event => { if (settingsOpen && !settingsMenu.contains(event.target) && !settingsButton.contains(event.target)) void closeSettings(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && settingsOpen) { event.stopPropagation(); void closeSettings(); } });

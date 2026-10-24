@@ -17,11 +17,11 @@
     </section>
     <footer id="footer" class="footer">
       <span id="footer-status"></span>
-      <button id="settings" class="settings" aria-label="Configurar proveedores" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-menu"></button>
+      <button id="settings" class="settings" aria-label="Configurar proveedores" aria-expanded="false" aria-controls="settings-menu"></button>
     </footer>
-    <div id="settings-menu" class="settings-menu" aria-labelledby="settings-title" hidden>
+    <div id="settings-menu" class="settings-menu" role="group" aria-labelledby="settings-title" hidden>
       <h2 id="settings-title">Mostrar IA</h2>
-      <div id="provider-settings" role="listbox" aria-multiselectable="true"></div>
+      <div id="provider-settings"></div>
     </div>
   </main>
   <script type="module" src="app.js"></script>

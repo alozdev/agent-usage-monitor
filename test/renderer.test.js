@@ -4,6 +4,110 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { formatReset } from '../src/core/limits.js';
 import { activeResetAt, formatAge, formatCountdown, meterTone, providerState } from '../src/core/presentation.js';
+import { createClock, flush } from './helpers/clock.js';
+
+async function settingsHarness() {
+  const source = (await readFile(new URL('../src/renderer/app.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '');
+  const clock = createClock();
+  const elements = {};
+  for (const selector of ['#providers', '.widget', '#toggle', '#footer', '#footer-status', '#settings', '#settings-menu', '#provider-settings', '#empty-state', '#empty-icon']) {
+    const classes = new Set();
+    elements[selector] = { dataset: {}, children: [], hidden: true, innerHTML: '', attributes: {}, listeners: {}, classes,
+      classList: { add: name => classes.add(name), remove: name => classes.delete(name), toggle: (name, on) => on ? classes.add(name) : classes.delete(name) },
+      setAttribute(name, value) { this.attributes[name] = value; }, addEventListener(name, fn) { this.listeners[name] = fn; }, contains: () => false,
+    };
+  }
+  let finishMotion;
+  let motion = Promise.resolve();
+  const context = vm.createContext({ formatReset, activeResetAt, formatAge, formatCountdown, meterTone, providerState,
+    document: { querySelector: selector => elements[selector], addEventListener() {} },
+    localStorage: { getItem: () => null },
+    window: { matchMedia: () => ({ matches: false }), usageMonitor: {
+      read: async () => ({ limits: {}, providers: [{ key: 'claude', name: 'Claude', installed: true }, { key: 'codex', name: 'Codex', installed: true }] }),
+      layout: async () => ({ placement: { horizontal: 'right', vertical: 'down' }, duration: 160, delay: 24 }),
+      waitForMotion: () => motion, onUpdate() {}, onGlass() {},
+    } },
+    ...clock, setInterval() {}, requestAnimationFrame: fn => clock.setTimeout(fn, 16),
+  });
+  vm.runInContext(source, context);
+  await flush();
+  const call = expression => vm.runInContext(expression, context);
+  const initial = call('setExpanded(true)');
+  await clock.advance(1000);
+  await initial;
+  return { elements, clock, call, holdMotion() { motion = new Promise(resolve => { finishMotion = resolve; }); }, finishMotion: () => finishMotion() };
+}
+
+for (const close of ['closeSettings()', 'setExpanded(false)']) {
+  test(`cancelar una apertura con ${close} mantiene el menú oculto`, async () => {
+    const h = await settingsHarness();
+    h.holdMotion();
+    const opening = h.call('openSettings()');
+    await flush();
+    const closing = h.call(close);
+    await h.clock.advance(1000);
+    h.finishMotion();
+    await Promise.all([opening, closing]);
+    assert.equal(h.elements['#settings-menu'].hidden, true);
+    assert.equal(h.elements['#settings-menu'].classes.has('open'), false);
+    assert.equal(h.elements['#settings'].attributes['aria-expanded'], 'false');
+    assert.equal(h.call('settingsOpen'), false);
+  });
+}
+
+test('el renderer espera la confirmación de la ventana antes de mostrar ajustes', async () => {
+  const h = await settingsHarness();
+  h.holdMotion();
+  const opening = h.call('openSettings()');
+  await h.clock.advance(1000);
+  assert.equal(h.elements['#settings-menu'].hidden, true, 'el tiempo estimado no sustituye el fin real de la animación');
+  h.finishMotion();
+  await opening;
+  await h.clock.advance(16);
+  assert.equal(h.elements['#settings-menu'].hidden, false);
+  assert.equal(h.elements['#settings-menu'].classes.has('open'), true);
+});
+
+test('cerrar ajustes antes del siguiente frame no revive su clase open', async () => {
+  const h = await settingsHarness();
+  h.call('window.usageMonitor.layout = async () => ({ duration: 0 })');
+  const opening = h.call('openSettings()');
+  await flush();
+  await opening;
+  const closing = h.call('closeSettings()');
+  await h.clock.advance(1000);
+  await closing;
+  assert.equal(h.elements['#settings-menu'].hidden, true);
+  assert.equal(h.elements['#settings-menu'].classes.has('open'), false);
+});
+
+test('contraer el panel impide reabrir ajustes durante su cierre', async () => {
+  const h = await settingsHarness();
+  await h.call('openSettings()');
+  await h.clock.advance(16);
+  const closing = h.call('setExpanded(false)');
+  await h.clock.advance(50);
+  await h.call('openSettings()');
+  await h.clock.advance(1000);
+  await closing;
+  assert.equal(h.call('settingsOpen'), false);
+  assert.equal(h.elements['#settings-menu'].hidden, true);
+  assert.equal(h.elements['.widget'].classes.has('expanded'), false);
+});
+
+test('el renderer conserva opening hasta que la ventana termina', async () => {
+  const h = await settingsHarness();
+  const closing = h.call('setExpanded(false)');
+  await h.clock.advance(1000);
+  await closing;
+  h.holdMotion();
+  const opening = h.call('setExpanded(true)');
+  await h.clock.advance(1000);
+  assert.equal(h.elements['.widget'].classes.has('opening'), true);
+  h.finishMotion();
+  await opening;
+  assert.equal(h.elements['.widget'].classes.has('opening'), false);
+});
 
 test('renderer refresh, minute tick, failure and opt-in use the minimal surface', async () => {
   const source = (await readFile(new URL('../src/renderer/app.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '');
@@ -20,7 +124,7 @@ test('renderer refresh, minute tick, failure and opt-in use the minimal surface'
   const widget = { dataset: {}, classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name), add: name => classes.add(name), remove: name => classes.delete(name) } };
   const footerClasses = new Set();
   const footer = { innerHTML: '', classList: { toggle: (name, enabled) => enabled ? footerClasses.add(name) : footerClasses.delete(name) } };
-  const footerStatus = { innerHTML: '', setAttribute() {} };
+  const footerStatus = { innerHTML: '', setAttribute() {}, classList: { toggle() {} } };
   const settingsListeners = {};
   const settingsButton = { innerHTML: '', addEventListener: (name, fn) => { settingsListeners[`button:${name}`] = fn; }, setAttribute() {}, contains: () => false };
   const menuClasses = new Set();
@@ -39,10 +143,9 @@ test('renderer refresh, minute tick, failure and opt-in use the minimal surface'
   let glass;
   let animationFrame;
   const context = vm.createContext({ formatReset, activeResetAt, formatAge, formatCountdown, meterTone, providerState,
-    createIcon: icon => ({ outerHTML: `<svg data-lucide="${icon}"></svg>` }), Eye: 'eye', EyeOff: 'eye-off', Settings: 'settings', RefreshCw: 'refresh-cw',
     document: { querySelector: selector => ({ '#providers': providers, '#toggle': toggle, '.widget': widget, '#footer': footer, '#footer-status': footerStatus, '#settings': settingsButton, '#settings-menu': settingsMenu, '#provider-settings': providerSettings, '#empty-state': emptyState, '#empty-icon': emptyIcon })[selector] || { addEventListener() {} }, addEventListener: (name, fn) => { settingsListeners[`document:${name}`] = fn; } },
     localStorage: { getItem: key => stored[key] || null, setItem: (key, value) => { stored[key] = value; } },
-    window: { screenX: 100, screenY: 200, matchMedia: () => ({ matches: false }), usageMonitor: { layout: value => { layouts.push(value); return Promise.resolve({ horizontal: 'right', vertical: 'down' }); }, move: (x, y) => moves.push([x, y]), read: async () => { if (failed) throw Error(); return data; }, openInstall: async key => { installPages.push(key); }, onUpdate: listener => { push = listener; }, onGlass: listener => { glass = listener; } } },
+    window: { screenX: 100, screenY: 200, matchMedia: () => ({ matches: false }), usageMonitor: { layout: value => { layouts.push(value); return Promise.resolve({ horizontal: 'right', vertical: 'down' }); }, waitForMotion: async () => {}, move: (x, y) => moves.push([x, y]), read: async () => { if (failed) throw Error(); return data; }, openInstall: async key => { installPages.push(key); }, onUpdate: listener => { push = listener; }, onGlass: listener => { glass = listener; } } },
     setInterval: (fn, ms) => intervals.push({ fn, ms }),
     setTimeout: fn => { fn(); return 1; },
     requestAnimationFrame: fn => { animationFrame = fn; return 1; },
@@ -54,8 +157,8 @@ test('renderer refresh, minute tick, failure and opt-in use the minimal surface'
   assert.equal(widget.dataset.count, '2');
   assert.deepEqual([widget.dataset.openHorizontal, widget.dataset.openVertical], ['right', 'down']);
   assert.deepEqual(lastLayout(), { expanded: false, selectorOpen: false, reduceMotion: false, providers: ['claude', 'codex'] });
-  assert.match(settingsButton.innerHTML, /data-lucide="settings"/);
-  assert.match(footerStatus.innerHTML, /data-lucide="refresh-cw"/);
+  assert.match(settingsButton.innerHTML, /class="ui-icon icon-settings"/);
+  assert.match(footerStatus.innerHTML, /class="ui-icon icon-refresh-cw"/);
   assert.doesNotMatch(footerStatus.innerHTML, /Actualizado/);
   assert.deepEqual(fills.map(fill => fill.style.strokeDasharray), ['80 100', '100 100']);
   assert.match(providers.innerHTML, /icons\/claude\.svg/);
@@ -103,7 +206,9 @@ test('renderer refresh, minute tick, failure and opt-in use the minimal surface'
   assert.match(providerSettings.innerHTML, /Claude/);
   assert.match(providerSettings.innerHTML, /Codex/);
   assert.match(providerSettings.innerHTML, /aria-checked="true"/);
-  assert.match(providerSettings.innerHTML, /data-lucide="eye"/);
+  assert.doesNotMatch(providerSettings.innerHTML, /role="option"/);
+  assert.match(providerSettings.innerHTML, /role="group" aria-label="Claude"/);
+  assert.match(providerSettings.innerHTML, /class="ui-icon icon-eye"/);
   settingsListeners['list:click']({ target: { dataset: { action: 'toggle-provider', provider: 'codex' } } });
   assert.equal((providers.innerHTML.match(/<article/g) || []).length, 1);
   assert.equal(widget.dataset.count, '1');
@@ -148,6 +253,7 @@ test('renderer refresh, minute tick, failure and opt-in use the minimal surface'
   assert.match(providers.innerHTML, /class="detail-figure">64%/);
   push({ limits: data.limits, providers: [{ key: 'claude', name: 'Claude', installed: false }, { key: 'codex', name: 'Codex', installed: true }] });
   assert.match(providerSettings.innerHTML, /data-action="install" data-provider="claude"/);
+  assert.match(providerSettings.innerHTML, /aria-label="Instalar Claude"/);
   settingsListeners['list:click']({ target: { dataset: { action: 'install', provider: 'claude' } } });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(installPages, ['claude']);
@@ -162,6 +268,7 @@ test('la superficie elimina la X y ofrece un selector de proveedores', async () 
   assert.match(html, /id="settings-menu"/);
   assert.match(html, /id="empty-state"/);
   assert.match(html, /id="provider-settings"/);
+  assert.doesNotMatch(html, /listbox|aria-multiselectable/);
   assert.match(css, /transition: border-radius[^;]+box-shadow/);
   assert.match(css, /@keyframes content-in[^}]+blur\(3px\)/s);
 });

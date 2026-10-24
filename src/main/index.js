@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { projectClaude, projectCodex } from '../core/limits.js';
 import { createClaudeClient, createCodexClient } from './data.js';
 import { resolveExecutable } from './process.js';
-import { statusLineStatus } from './statusline.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const WINDOW_MARGIN = { width: 56, height: 56 };
@@ -37,7 +36,9 @@ let tray;
 let quitting = false;
 let panelLayout = { expanded: false, selectorOpen: false, providers: ['claude', 'codex'] };
 let layoutPlacement = { horizontal: 'left', vertical: 'down' };
+let layoutTarget = null;
 let boundsAnimation = 0;
+let boundsMotion = Promise.resolve();
 let glassMorph = 0;
 let glassPanel;
 let glassScale;
@@ -103,18 +104,18 @@ function animateBounds(from, to, duration, delay = 0, fromMorph = glassMorph, to
     mainWindow.setBounds(to);
     return Promise.resolve();
   }
-  const frames = Math.max(1, Math.round(duration / 8));
+  const startedAt = performance.now() + delay;
   return new Promise(resolve => {
-    let frame = 0;
     const step = () => {
       if (animation !== boundsAnimation || !mainWindow || mainWindow.isDestroyed()) return resolve();
-      frame++;
-      const eased = easeInOutQuint(frame / frames);
+      const elapsed = Math.max(0, performance.now() - startedAt);
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeInOutQuint(progress);
       const next = {};
       for (const key of ['x', 'y', 'width', 'height']) next[key] = Math.round(from[key] + (to[key] - from[key]) * eased);
       glassMorph = fromMorph + (toMorph - fromMorph) * eased;
       mainWindow.setBounds(next);
-      if (frame < frames) setTimeout(step, 8);
+      if (progress < 1) setTimeout(step, Math.min(8, duration - elapsed));
       else resolve();
     };
     setTimeout(step, delay);
@@ -124,7 +125,7 @@ function animateBounds(from, to, duration, delay = 0, fromMorph = glassMorph, to
 async function readSettings() { try { return JSON.parse(await readFile(settingsPath(), 'utf8')); } catch { return {}; } }
 async function writePosition() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const bounds = mainWindow.getBounds();
+  const bounds = layoutTarget || mainWindow.getBounds();
   const target = settingsPath();
   const temporary = `${target}.${process.pid}.tmp`;
   const current = layoutSize();
@@ -251,7 +252,7 @@ async function update(key, read) {
 async function dashboard(force = false) {
   if (force) await readClaude();
   const now = Date.now();
-  return { limits: { claude: projectClaude(limitsCache.claude, now), codex: projectCodex(limitsCache.codex, now) }, providers: detectedProviders(), statusLine: await statusLineStatus(os.homedir()) };
+  return { limits: { claude: projectClaude(limitsCache.claude, now), codex: projectCodex(limitsCache.codex, now) }, providers: detectedProviders() };
 }
 // fetchedAt cambia en cada lectura; sin él, la firma solo cambia cuando cambia lo que se ve.
 const signature = data => JSON.stringify(data, (key, value) => key === 'fetchedAt' ? undefined : value);
@@ -329,15 +330,14 @@ function applyLayout(layout) {
   const next = { expanded: layout.expanded, selectorOpen: layout.selectorOpen, providers: normalizeProviderKeys(layout.providers) };
   if (!next.expanded && next.selectorOpen) throw new Error('Estado de selector inválido');
   const bounds = mainWindow.getBounds();
+  const anchor = layoutTarget || bounds;
   const size = layoutSize(next);
   const previous = layoutSize(panelLayout);
   const area = screen.getDisplayMatching(bounds).workArea;
-  if (!panelLayout.expanded && next.expanded) layoutPlacement = placementFor(bounds, area);
-  else if (panelLayout.expanded && !next.expanded) layoutPlacement = placementFor(bounds, area);
-  else if (!panelLayout.expanded && !next.expanded) layoutPlacement = placementFor(bounds, area);
+  if (!panelLayout.expanded) layoutPlacement = placementFor(anchor, area);
   const unchanged = next.expanded === panelLayout.expanded && next.selectorOpen === panelLayout.selectorOpen && next.providers.join() === panelLayout.providers.join();
   if (unchanged) return { placement: layoutPlacement, duration: 0, delay: 0 };
-  const placed = placeBounds(bounds, previous, size, layoutPlacement);
+  const placed = placeBounds(anchor, previous, size, layoutPlacement);
   placed.x = Math.max(area.x, Math.min(placed.x, area.x + area.width - size.width));
   placed.y = Math.max(area.y, Math.min(placed.y, area.y + area.height - size.height));
   const directionChanged = panelLayout.expanded !== next.expanded;
@@ -346,13 +346,19 @@ function applyLayout(layout) {
   const fromMorph = glassMorph;
   const toMorph = next.expanded ? 1 : 0;
   panelLayout = next;
-  void animateBounds(bounds, placed, duration, delay, fromMorph, toMorph);
+  layoutTarget = placed;
+  boundsMotion = animateBounds(bounds, placed, duration, delay, fromMorph, toMorph);
   return { placement: layoutPlacement, duration, delay };
 }
 handle('monitor:layout', applyLayout);
+handle('monitor:motion', async () => {
+  let motion;
+  do { motion = boundsMotion; await motion; } while (motion !== boundsMotion);
+});
 handle('monitor:move', (x, y) => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Posición inválida');
   mainWindow.setPosition(Math.round(x), Math.round(y));
+  layoutTarget = null;
   if (panelLayout.expanded) {
     const bounds = mainWindow.getBounds();
     layoutPlacement = placementFor(bounds, screen.getDisplayMatching(bounds).workArea);
