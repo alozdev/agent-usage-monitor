@@ -1,0 +1,63 @@
+@font-face { font-family: 'Hanken Grotesk'; src: url('fonts/HankenGrotesk.ttf') format('truetype'); font-weight: 100 900; font-display: swap; }
+/* Electron resuelve prefers-color-scheme con nativeTheme; el proceso principal lo fija en claro. */
+:root { color-scheme: light; font-family: 'Hanken Grotesk', sans-serif; font-weight: 500; color: #444; font-variant-numeric: tabular-nums; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: transparent; user-select: none; }
+button { -webkit-app-region: no-drag; font: inherit; cursor: pointer; }
+.widget { position: relative; width: 42px; height: 138px; margin: 20px 28px 36px; padding: 8px 6px 6px; background: #fff; border: 1px solid #999; border-radius: 21px; }
+.toggle { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; border-radius: inherit; background: transparent; touch-action: none; }
+.toggle:focus-visible { outline: 2px solid #999; outline-offset: 3px; }
+#providers { display: flex; flex-direction: column; gap: 22px; height: 100%; }
+.provider { position: relative; display: flex; flex-direction: column; align-items: center; flex: 1 1 0; min-height: 0; gap: 4px; }
+.gauge { position: relative; width: 28px; height: 28px; flex-shrink: 0; }
+.gauge svg { display: block; width: 100%; height: 100%; fill: none; stroke-width: 3; }
+.track { stroke: #ddd; }
+.fill { stroke: #555; stroke-dasharray: 0 100; transform: rotate(-90deg); transform-origin: center; }
+.provider-icon { position: absolute; width: 14px; height: 14px; inset: 0; margin: auto; object-fit: contain; filter: brightness(0); opacity: .75; }
+.figure { height: 18px; font-size: 12px; font-weight: 500; line-height: 18px; white-space: nowrap; }
+.figure span { margin-left: 1px; font-size: 8px; }
+.figure.label { font-size: 8px; }
+.name, .countdown, .reset { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.bar, .detail-figure, .detail-label, .detail-countdown, .footer { display: none; }
+.unknown .figure, .stale .figure { color: #888; }
+.aged .figure, .aged .gauge { opacity: .5; }
+.quit { position: absolute; z-index: 2; top: 0; right: -20px; width: 18px; height: 18px; border: 0; padding: 0; border-radius: 50%; background: #fff; color: #777; font-size: 12px; line-height: 18px; opacity: 0; }
+.widget:hover .quit, .quit:focus-visible { opacity: 1; }
+.connect { position: absolute; z-index: 2; bottom: -22px; width: 28px; height: 22px; border: 1px solid #bbb; padding: 0; border-radius: 4px; background: #fff; color: #555; font-size: 7px; line-height: 9px; overflow-wrap: anywhere; }
+.connect:disabled { cursor: wait; }
+.expanded { width: 328px; height: 200px; padding: 17px; border-radius: 22px; }
+.expanded #providers { flex-direction: row; gap: 14px; height: 127px; }
+.expanded .provider { align-items: flex-start; min-width: 0; padding-left: 21px; gap: 0; }
+.expanded .provider + .provider { border-left: 1px solid #ddd; padding-left: 35px; }
+.expanded .gauge, .expanded .figure, .expanded .connect { display: none; }
+.expanded .name, .expanded .reset { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+.expanded .name { font-size: 12px; font-weight: 500; line-height: 16px; }
+.expanded .detail-figure { display: block; font-size: 32px; font-weight: 700; line-height: 40px; }
+.expanded .detail-label { display: block; margin-top: 6px; font-size: 11px; line-height: 16px; }
+.expanded .detail-countdown { display: block; font-size: 14px; font-weight: 700; line-height: 20px; white-space: nowrap; }
+.expanded .reset { font-size: 12px; line-height: 18px; }
+.expanded .bar { position: absolute; display: block; top: 0; bottom: 0; left: 0; width: 9px; overflow: hidden; border-radius: 5px; background: #ddd; }
+.expanded .provider + .provider .bar { left: 14px; }
+.bar-fill { position: absolute; bottom: 0; width: 100%; background: #555; }
+.expanded .aged .detail-figure, .expanded .aged .detail-label, .expanded .aged .detail-countdown, .expanded .aged .reset,
+.expanded .stale .detail-figure, .expanded .stale .detail-label, .expanded .stale .detail-countdown, .expanded .stale .reset { color: #777; }
+.expanded .aged .bar, .expanded .stale .bar { opacity: .5; }
+.expanded .stale .bar-fill { background: #aaa; }
+.expanded .unknown .bar { border: 1px dashed #bbb; background: transparent; }
+.expanded .unknown .detail-figure { color: #777; }
+.expanded .unknown .detail-label { font-size: 14px; font-weight: 700; }
+.expanded .unknown .detail-countdown { color: #888; font-size: 12px; font-weight: 500; }
+.expanded .unknown .reset { display: none; }
+.expanded .footer { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 7px; border-top: 1px solid #ddd; font-size: 11px; line-height: 16px; white-space: nowrap; }
+.footer .outdated { color: #777; font-weight: 700; }
+.widget.glass { --glass-ink: #29292e; --glass-muted: #55555d; --glass-line: rgb(0 0 0 / 18%); background: rgb(255 255 255 / 12%); color: var(--glass-ink); border-color: rgb(255 255 255 / 65%); box-shadow: 0 8px 24px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 55%), inset 0 -1px 0 rgb(255 255 255 / 15%); }
+.glass .light-text { --glass-ink: #fff; --glass-muted: #ddd; --glass-line: rgb(255 255 255 / 24%); color: var(--glass-ink); }
+.glass .track { stroke: var(--glass-line); }
+.glass .fill { stroke: var(--glass-ink); }
+.glass .bar { background: var(--glass-line); }
+.glass .bar-fill { background: var(--glass-ink); }
+.glass .stale .bar-fill { background: var(--glass-muted); }
+.glass .provider + .provider, .glass .footer { border-color: var(--glass-line); }
+.glass .unknown .figure, .glass .stale .figure, .glass .aged .detail-figure, .glass .aged .detail-label, .glass .aged .detail-countdown, .glass .aged .reset, .glass .stale .detail-figure, .glass .stale .detail-label, .glass .stale .detail-countdown, .glass .stale .reset, .glass .unknown .detail-figure, .glass .unknown .detail-countdown, .glass .footer .outdated { color: var(--glass-muted); }
+.glass .light-text .provider-icon { filter: brightness(0) invert(1); opacity: .9; }

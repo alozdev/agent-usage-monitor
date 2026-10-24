@@ -1,0 +1,45 @@
+{
+  "name": "agent-usage-monitor",
+  "version": "0.1.0",
+  "description": "Floating five-hour usage monitor for Claude Code and Codex",
+  "type": "module",
+  "main": "src/main/index.js",
+  "author": "barracodev",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "test:visual": "electron scripts/visual-check.mjs",
+    "check": "node --check src/main/index.js && node --check src/main/data.js && node --check src/main/statusline.js && node --check src/main/process.js && node --check src/main/preload.cjs && node --check src/core/limits.js && node --check src/core/presentation.js && node --check src/core/statusline.js && node --check src/collector/usage-monitor-statusline-collector.mjs && node --check src/renderer/app.js",
+    "dist": "npm test && npm run check && electron-builder --win nsis portable"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "dev.barracodev.agentusagemonitor",
+    "productName": "Agent Usage Monitor",
+    "asar": true,
+    "asarUnpack": ["node_modules/@hicccc77/electron-liquid-glass/**/*"],
+    "files": ["src/**/*", "package.json", "README.md", "LICENSE"],
+    "directories": { "output": "dist" },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": ["nsis", "portable"]
+    },
+    "portable": {
+      "artifactName": "Agent-Usage-Monitor-${version}-${arch}-portable.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Agent-Usage-Monitor-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "@hicccc77/electron-liquid-glass": "0.4.0"
+  }
+}
